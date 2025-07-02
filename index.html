@@ -111,6 +111,7 @@
       }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
   </head>
   <body>
     <div class="container">
@@ -152,25 +153,19 @@
 
     <script>
       // --- CẤU HÌNH SUPABASE ---
-      // !!! QUAN TRỌNG: Điền thông tin Supabase của bạn vào đây
-      const SUPABASE_URL = "https://klkqhcmvsfcbindhodru.supabase.co";
-      const SUPABASE_ANON_KEY =
-        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtsa3FoY212c2ZjYmluZGhvZHJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE0NzI2OTksImV4cCI6MjA2NzA0ODY5OX0.zgYtYET9saIdLGPeSvvWUdn8NQ5VUQ9ULmhynedHqvQ";
-
+     
       // --- KHỞI TẠO CLIENT ---
       // Sửa lỗi: Khởi tạo client trước tiên và gán vào một biến có tên khác để tránh xung đột
       let supabaseClient;
-      try {
-        if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
-          throw new Error(
-            "Lỗi cấu hình: Vui lòng điền thông tin Supabase trong file index.html"
-          );
+        try {
+            // Đọc cấu hình từ file config.js
+            if (!CONFIG || !CONFIG.SUPABASE_URL || !CONFIG.SUPABASE_ANON_KEY) {
+                throw new Error("Lỗi cấu hình: Không tìm thấy thông tin Supabase trong config.js");
+            }
+            supabaseClient = supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+        } catch (e) {
+            alert(e.message);
         }
-        // Gọi createClient từ đối tượng 'supabase' toàn cục do CDN cung cấp
-        supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-      } catch (e) {
-        alert(e.message);
-      }
 
       // --- DOM ELEMENTS ---
       const phase1Div = document.getElementById("phase-1");
