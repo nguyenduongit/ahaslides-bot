@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Deep Tools - Remote Controller</title>
+    <style>
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        margin: 0;
+        background-color: #121212;
+        color: #e0e0e0;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        min-height: 100vh;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      .container {
+        width: 100%;
+        max-width: 500px;
+        background-color: #1e1e1e;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+      }
+      .header {
+        background-color: #333;
+        padding: 15px;
+        text-align: center;
+        border-bottom: 1px solid #444;
+      }
+      .header h1 {
+        margin: 0;
+        font-size: 1.5em;
+        color: #00aaff;
+      }
+      .content {
+        padding: 20px;
+      }
+      .input-group {
+        margin-bottom: 20px;
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        color: #bbb;
+      }
+      input[type="url"],
+      input[type="number"] {
+        width: 100%;
+        padding: 12px;
+        background-color: #333;
+        border: 1px solid #555;
+        border-radius: 4px;
+        color: #fff;
+        font-size: 1em;
+        box-sizing: border-box;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        border: none;
+        border-radius: 4px;
+        background-color: #007bff;
+        color: white;
+        font-size: 1em;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+      button:hover:not(:disabled) {
+        background-color: #0056b3;
+      }
+      button:disabled {
+        background-color: #555;
+        cursor: not-allowed;
+      }
+      #status-area {
+        margin-top: 20px;
+        padding: 15px;
+        background-color: #2a2a2a;
+        border-radius: 4px;
+        border: 1px solid #444;
+        font-family: "Courier New", Courier, monospace;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        min-height: 50px;
+      }
+      .options-list {
+        list-style-type: none;
+        padding: 0;
+        margin-top: 15px;
+      }
+      .options-list li {
+        margin-bottom: 10px;
+        padding: 10px;
+        background-color: #252525;
+        border-radius: 4px;
+        border: 1px solid #444;
+        cursor: pointer;
+        transition: background-color 0.2s;
+      }
+      .options-list li.selected {
+        background-color: #0056b3;
+        border-color: #007bff;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>Bảng Điều Khiển AhaSlides</h1>
+      </div>
+      <div class="content">
+        <div id="phase-1">
+          <div class="input-group">
+            <label for="url-input">URL Phòng AhaSlides:</label>
+            <input
+              type="url"
+              id="url-input"
+              placeholder="https://present.ahaslides.com/..."
+            />
+          </div>
+          <button id="fetch-info-btn">1. Lấy Thông Tin</button>
+        </div>
+
+        <div id="phase-2" class="hidden">
+          <h3 id="question-title" style="color: #00aaff"></h3>
+          <div class="input-group">
+            <label>Chọn Mục Tiêu:</label>
+            <ul id="options-container" class="options-list"></ul>
+          </div>
+          <div class="input-group">
+            <label for="vote-count-input">Số Lượng Vote:</label>
+            <input type="number" id="vote-count-input" value="100" min="1" />
+          </div>
+          <button id="execute-btn">2. Bắt Đầu Thực Thi</button>
+        </div>
+
+        <div id="status-area">
+          <strong>Trạng thái:</strong>
+          <p id="status-text">Sẵn sàng nhập URL...</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // --- CẤU HÌNH SUPABASE ---
+      // !!! QUAN TRỌNG: Điền thông tin Supabase của bạn vào đây
+      const SUPABASE_URL = "https://klkqhcmvsfcbindhodru.supabase.co";
+      const SUPABASE_ANON_KEY =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtsa3FoY212c2ZjYmluZGhvZHJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE0NzI2OTksImV4cCI6MjA2NzA0ODY5OX0.zgYtYET9saIdLGPeSvvWUdn8NQ5VUQ9ULmhynedHqvQ";
+
+      // --- KHỞI TẠO ---
+      if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR_SUPABASE_URL")) {
+        alert(
+          "Lỗi cấu hình: Vui lòng điền thông tin Supabase trong file index.html"
+        );
+      }
+      const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      let currentSessionId = null;
+      let selectedTargetId = null;
+      let realtimeChannel = null;
+
+      // --- DOM ELEMENTS ---
+      const phase1Div = document.getElementById("phase-1");
+      const phase2Div = document.getElementById("phase-2");
+      const urlInput = document.getElementById("url-input");
+      const fetchBtn = document.getElementById("fetch-info-btn");
+      const executeBtn = document.getElementById("execute-btn");
+      const statusText = document.getElementById("status-text");
+      const questionTitle = document.getElementById("question-title");
+      const optionsContainer = document.getElementById("options-container");
+      const voteCountInput = document.getElementById("vote-count-input");
+
+      // --- HÀM XỬ LÝ ---
+
+      function setStatus(message, isWorking = false) {
+        statusText.textContent = message;
+        fetchBtn.disabled = isWorking;
+        executeBtn.disabled = isWorking;
+      }
+
+      function resetUI() {
+        phase1Div.classList.remove("hidden");
+        phase2Div.classList.add("hidden");
+        optionsContainer.innerHTML = "";
+        currentSessionId = null;
+        selectedTargetId = null;
+        urlInput.value = "";
+        if (realtimeChannel) {
+          supabase.removeChannel(realtimeChannel);
+          realtimeChannel = null;
+        }
+        setStatus("Sẵn sàng nhập URL mới...");
+      }
+
+      function subscribeToSession(sessionId) {
+        if (realtimeChannel) {
+          supabase.removeChannel(realtimeChannel);
+        }
+        realtimeChannel = supabase
+          .channel(`remote_session_${sessionId}`)
+          .on(
+            "postgres_changes",
+            {
+              event: "UPDATE",
+              schema: "public",
+              table: "remote_sessions",
+              filter: `id=eq.${sessionId}`,
+            },
+            handleSessionUpdate
+          )
+          .subscribe();
+      }
+
+      function handleSessionUpdate(payload) {
+        const session = payload.new;
+        setStatus(
+          `Worker: ${session.status}...\n${session.progress_log || ""}`,
+          true
+        );
+
+        if (session.status === "data_returned") {
+          phase1Div.classList.add("hidden");
+          phase2Div.classList.remove("hidden");
+
+          questionTitle.textContent =
+            session.session_data.question || "Câu hỏi không có tiêu đề";
+          optionsContainer.innerHTML = "";
+          session.session_data.options.forEach((opt) => {
+            const li = document.createElement("li");
+            li.textContent = `${opt.title} (Hiện có: ${opt.votesCount} vote)`;
+            li.dataset.id = opt.id;
+            li.onclick = () => {
+              document
+                .querySelectorAll("#options-container li")
+                .forEach((el) => el.classList.remove("selected"));
+              li.classList.add("selected");
+              selectedTargetId = parseInt(opt.id, 10);
+            };
+            optionsContainer.appendChild(li);
+          });
+          setStatus(
+            "Worker đã trả về dữ liệu. Vui lòng chọn một mục tiêu và số lượng."
+          );
+        } else if (
+          session.status === "completed" ||
+          session.status === "error"
+        ) {
+          setStatus(`Hoàn thành: ${session.progress_log || "Đã kết thúc."}`);
+          setTimeout(resetUI, 5000); // Tự động reset sau 5 giây
+        }
+      }
+
+      // --- SỰ KIỆN ---
+
+      fetchBtn.onclick = async () => {
+        const url = urlInput.value.trim();
+        if (!url) {
+          alert("Vui lòng nhập URL!");
+          return;
+        }
+
+        setStatus("Đang gửi yêu cầu đến Worker...", true);
+
+        try {
+          const { data, error } = await supabase
+            .from("remote_sessions")
+            .insert({ request_url: url, status: "url_submitted" })
+            .select()
+            .single();
+
+          if (error) throw error;
+
+          currentSessionId = data.id;
+          setStatus("Đã gửi yêu cầu. Đang chờ Worker xử lý...", true);
+          subscribeToSession(currentSessionId);
+        } catch (error) {
+          setStatus(`Lỗi khi tạo phiên: ${error.message}`);
+        }
+      };
+
+      executeBtn.onclick = async () => {
+        if (!currentSessionId || selectedTargetId === null) {
+          alert("Vui lòng chọn một mục tiêu!");
+          return;
+        }
+        const count = parseInt(voteCountInput.value, 10);
+        if (isNaN(count) || count <= 0) {
+          alert("Số lượng không hợp lệ!");
+          return;
+        }
+
+        const command = { targetId: selectedTargetId, count: count };
+        setStatus("Đang gửi lệnh thực thi đến Worker...", true);
+
+        try {
+          const { error } = await supabase
+            .from("remote_sessions")
+            .update({
+              execution_command: command,
+              status: "execution_triggered",
+            })
+            .eq("id", currentSessionId);
+
+          if (error) throw error;
+          setStatus("Đã gửi lệnh thực thi. Đang chờ Worker bơm vote...", true);
+        } catch (error) {
+          setStatus(`Lỗi khi gửi lệnh: ${error.message}`);
+        }
+      };
+    </script>
+  </body>
+</html>
