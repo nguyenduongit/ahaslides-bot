@@ -1,41 +1,70 @@
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
 import fetch from "node-fetch";
 
-// Các kiểu dữ liệu có thể copy từ worker cũ hoặc định nghĩa lại ở đây
+// ---- ĐỊNH NGHĨA LẠI CÁC KIỂU DỮ LIỆU CẦN THIẾT ----
+// Việc này giúp function hoạt động độc lập mà không cần import từ project Electron.
+
+interface SlideOption {
+  id: number;
+  title: string;
+  votesCount: number;
+}
+
+interface AudienceData {
+  id: number;
+  name: string;
+  presentationId: number;
+  type: string;
+  multipleChoice: boolean;
+  isCorrectGetPoint: boolean;
+  stopSubmission: boolean;
+  fastAnswerGetMorePoint: boolean;
+  showVotingResultsOnAudience: boolean;
+  version: number;
+  timeToAnswer: number;
+  slideTimestamp: string;
+  SlideOptions: SlideOption[];
+  presentation: {
+    accessCode: string;
+  };
+}
+
 interface RemoteSession {
   id: string;
   status: string;
   request_url?: string;
-  session_data?: any;
+  session_data?: any; // Để 'any' ở đây cho linh hoạt
   execution_command?: {
     targetId: number;
     count: number;
   };
+  // SỬA LỖI: Thêm lại trường 'progress_log' vào interface
+  progress_log?: string;
 }
 
-// Hàm handler chính của Netlify Function
-exports.handler = async function (event) {
-  // Chỉ chấp nhận phương thức POST
+// ---- HÀM HANDLER CHÍNH CỦA NETLIFY FUNCTION ----
+exports.handler = async function (event: { httpMethod: string; body: string }) {
   if (event.httpMethod !== "POST") {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseKey) {
+    const errorMessage =
+      "Lỗi cấu hình: SUPABASE_URL hoặc SUPABASE_ANON_KEY chưa được thiết lập trên Netlify.";
+    console.error(errorMessage);
+    return { statusCode: 500, body: JSON.stringify({ error: errorMessage }) };
+  }
+
   try {
-    // Lấy dữ liệu từ body của webhook do Supabase gửi
     const payload = JSON.parse(event.body);
     console.log("Received payload from Supabase Webhook:", payload);
 
-    // Dữ liệu của hàng được thêm/sửa nằm trong payload.record
     const session: RemoteSession = payload.record;
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const SUPABASE_URL = "https://klkqhcmvsfcbindhodru.supabase.co";
-    const SUPABASE_ANON_KEY =
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtsa3FoY212c2ZjYmluZGhvZHJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE0NzI2OTksImV4cCI6MjA2NzA0ODY5OX0.zgYtYET9saIdLGPeSvvWUdn8NQ5VUQ9ULmhynedHqvQ";
-
-    // Khởi tạo Supabase client bên trong function
-    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-    // Dựa vào trạng thái để gọi hàm xử lý tương ứng
     if (session.status === "url_submitted") {
       await processNewUrl(session, supabase);
     } else if (session.status === "execution_triggered") {
@@ -47,15 +76,14 @@ exports.handler = async function (event) {
       body: JSON.stringify({ message: "Worker executed successfully" }),
     };
   } catch (error) {
-    console.error("Error in Netlify function:", error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
-    };
+    const errorMessage =
+      error instanceof Error ? error.message : "An unknown error occurred.";
+    console.error("Error in Netlify function:", errorMessage);
+    return { statusCode: 500, body: JSON.stringify({ error: errorMessage }) };
   }
 };
 
-// --- Các hàm logic (gần như giữ nguyên từ worker cũ) ---
+// --- CÁC HÀM LOGIC ----
 
 async function processNewUrl(session: RemoteSession, supabase: SupabaseClient) {
   if (!session.request_url) throw new Error("Request URL is missing.");
@@ -73,10 +101,33 @@ async function processNewUrl(session: RemoteSession, supabase: SupabaseClient) {
   );
   if (!response.ok)
     throw new Error(`Failed to fetch AhaSlides data: ${response.statusText}`);
-  const data = await response.json();
+
+  // SỬA LỖI: Ép kiểu 'data' về 'AudienceData' để TypeScript hiểu
+  const data = (await response.json()) as AudienceData;
 
   const relevantData = {
-    /* ... copy y hệt object relevantData từ worker cũ ... */
+    question: data.name || "AhaSlides Question",
+    options: data.SlideOptions.map((opt) => ({
+      id: opt.id,
+      title: opt.title,
+      votesCount: opt.votesCount,
+    })),
+    internalDetails: {
+      presentationId: data.presentationId,
+      slideId: data.id,
+      accessCode: data.presentation.accessCode,
+      slideTimestamp: data.slideTimestamp,
+      type: data.type,
+      config: {
+        timeToAnswer: data.timeToAnswer,
+        multipleChoice: data.multipleChoice,
+        isCorrectGetPoint: data.isCorrectGetPoint,
+        stopSubmission: data.stopSubmission,
+        fastAnswerGetMorePoint: data.fastAnswerGetMorePoint,
+        showVotingResultsOnAudience: data.showVotingResultsOnAudience,
+        version: data.version,
+      },
+    },
   };
   await updateSessionStatus(
     session.id,
@@ -97,8 +148,63 @@ async function processExecution(
     session.execution_command
   );
 
-  // ... copy y hệt toàn bộ logic của hàm processExecution từ worker cũ ...
-  // Chỉ cần thêm tham số 'supabase' vào các lời gọi updateSessionStatus
+  await updateSessionStatus(session.id, "executing", {}, supabase);
+
+  const { targetId, count } = session.execution_command;
+  const details = session.session_data.internalDetails;
+  let successfulVotes = 0;
+  const apiUrl = "https://audience.ahaslides.com/api/answer/create";
+
+  const templatePayload = {
+    presentation: details.presentationId,
+    slide: details.slideId,
+    accessCode: details.accessCode,
+    slideTimestamp: details.slideTimestamp,
+    type: details.type,
+    config: {
+      ...details.config,
+      quizTimestamp: [],
+      otherCorrectQuiz: [],
+    },
+  };
+
+  for (let i = 0; i < count; i++) {
+    const votePayload = {
+      ...templatePayload,
+      audience: generateRandomAudienceId(),
+      vote: [targetId],
+    };
+    try {
+      const fetchResponse = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(votePayload),
+      });
+      if (fetchResponse.ok) successfulVotes++;
+
+      if ((i + 1) % 10 === 0 || i === count - 1) {
+        const progressMessage = `Đã gửi ${
+          i + 1
+        }/${count} vote... Thành công: ${successfulVotes}`;
+        await updateSessionStatus(
+          session.id,
+          "executing",
+          { progress_log: progressMessage },
+          supabase
+        );
+      }
+    } catch (error) {
+      console.warn("Network error while sending vote, skipping...");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const finalMessage = `Hoàn thành! Gửi thành công ${successfulVotes}/${count} phiếu.`;
+  await updateSessionStatus(
+    session.id,
+    "completed",
+    { progress_log: finalMessage },
+    supabase
+  );
 }
 
 async function updateSessionStatus(
@@ -118,4 +224,11 @@ async function updateSessionStatus(
   }
 }
 
-// Bạn cũng cần copy các hàm phụ trợ khác như generateRandomAudienceId nếu có
+function generateRandomAudienceId(): string {
+  const chars = "0123456789abcdef";
+  let result = "";
+  for (let i = 0; i < 32; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
