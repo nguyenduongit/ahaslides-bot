@@ -111,6 +111,7 @@
       }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
   </head>
   <body>
     <div class="container">
@@ -151,40 +152,61 @@
     </div>
 
     <script>
-      // --- CẤU HÌNH SUPABASE ---
-      const CONFIG = {
-        SUPABASE_URL: "https://klkqhcmvsfcbindhodru.supabase.co",
-        SUPABASE_ANON_KEY:
-          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtsa3FoY212c2ZjYmluZGhvZHJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE0NzI2OTksImV4cCI6MjA2NzA0ODY5OX0.zgYtYET9saIdLGPeSvvWUdn8NQ5VUQ9ULmhynedHqvQ",
-      };
+      // --- CẤU HÌNH ---
+      // Sẽ đọc từ file config.js. Nếu không dùng file, bạn có thể điền trực tiếp vào đây.
+      const SUPABASE_URL = CONFIG.SUPABASE_URL;
+      const SUPABASE_ANON_KEY = CONFIG.SUPABASE_ANON_KEY;
 
       // --- DOM ELEMENTS ---
       const phase1Div = document.getElementById("phase-1");
       const phase2Div = document.getElementById("phase-2");
+      const urlInput = document.getElementById("url-input");
+      const fetchBtn = document.getElementById("fetch-info-btn");
+      const executeBtn = document.getElementById("execute-btn");
       const statusText = document.getElementById("status-text");
-      // ... (các element khác)
+      const questionTitle = document.getElementById("question-title");
+      const optionsContainer = document.getElementById("options-container");
+      const voteCountInput = document.getElementById("vote-count-input");
 
+      // --- KHỞI TẠO CLIENT ---
       let supabaseClient;
       try {
         console.log("Đang khởi tạo Supabase client...");
-        supabaseClient = supabase.createClient(
-          CONFIG.SUPABASE_URL,
-          CONFIG.SUPABASE_ANON_KEY
-        );
+        if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+          throw new Error("Lỗi cấu hình: Không tìm thấy thông tin Supabase.");
+        }
+        supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         console.log("Supabase client đã khởi tạo thành công.");
       } catch (e) {
-        alert("Lỗi khởi tạo Supabase: " + e.message);
+        alert(e.message);
         console.error("Lỗi khởi tạo Supabase:", e);
       }
 
+      // --- BIẾN TRẠNG THÁI ---
       let currentSessionId = null;
       let selectedTargetId = null;
       let realtimeChannel = null;
 
       // --- HÀM XỬ LÝ ---
+
       function setStatus(message, isWorking = false) {
         statusText.textContent = message;
-        //...
+        fetchBtn.disabled = isWorking;
+        executeBtn.disabled = isWorking;
+      }
+
+      function resetUI() {
+        phase1Div.classList.remove("hidden");
+        phase2Div.classList.add("hidden");
+        optionsContainer.innerHTML = "";
+        currentSessionId = null;
+        selectedTargetId = null;
+        if (realtimeChannel) {
+          supabaseClient.removeChannel(realtimeChannel);
+          realtimeChannel = null;
+        }
+        urlInput.value = "";
+        setStatus("Sẵn sàng nhập URL mới...");
       }
 
       function subscribeToSession(sessionId) {
@@ -237,12 +259,9 @@
           console.log(
             "Phát hiện trạng thái 'data_returned'. Bắt đầu cập nhật giao diện."
           );
-          // ... (code cập nhật giao diện giữ nguyên)
           phase1Div.classList.add("hidden");
           phase2Div.classList.remove("hidden");
 
-          const questionTitle = document.getElementById("question-title");
-          const optionsContainer = document.getElementById("options-container");
           questionTitle.textContent =
             session.session_data.question || "Câu hỏi không có tiêu đề";
           optionsContainer.innerHTML = "";
@@ -269,11 +288,74 @@
           session.status === "error"
         ) {
           console.log("Phiên làm việc kết thúc.");
-          // ...
+          setStatus(`Hoàn thành: ${session.progress_log || "Đã kết thúc."}`);
+          setTimeout(resetUI, 5000);
         }
       }
 
-      // ... (toàn bộ các hàm và sự kiện còn lại giữ nguyên y hệt như cũ)
+      // --- SỰ KIỆN ---
+
+      fetchBtn.onclick = async () => {
+        if (!supabaseClient)
+          return alert(
+            "Supabase chưa được khởi tạo. Vui lòng kiểm tra lại cấu hình."
+          );
+
+        const url = urlInput.value.trim();
+        if (!url) return alert("Vui lòng nhập URL!");
+
+        setStatus("Đang gửi yêu cầu đến Worker...", true);
+
+        try {
+          const { data, error } = await supabaseClient
+            .from("remote_sessions")
+            .insert({ request_url: url, status: "url_submitted" })
+            .select()
+            .single();
+
+          if (error) throw error;
+
+          currentSessionId = data.id;
+          console.log(
+            `Đã tạo phiên mới thành công với ID: ${currentSessionId}`
+          );
+          setStatus("Đã gửi yêu cầu. Đang chờ Worker xử lý...", true);
+          subscribeToSession(currentSessionId);
+        } catch (error) {
+          console.error("Lỗi khi tạo phiên:", error);
+          setStatus(`Lỗi khi tạo phiên: ${error.message}`);
+        }
+      };
+
+      executeBtn.onclick = async () => {
+        if (!supabaseClient) return alert("Supabase chưa được khởi tạo.");
+        if (!currentSessionId || selectedTargetId === null)
+          return alert("Vui lòng chọn một mục tiêu!");
+
+        const count = parseInt(voteCountInput.value, 10);
+        if (isNaN(count) || count <= 0) return alert("Số lượng không hợp lệ!");
+
+        const command = { targetId: selectedTargetId, count: count };
+        setStatus("Đang gửi lệnh thực thi đến Worker...", true);
+        console.log(`Đang gửi lệnh thực thi:`, command);
+
+        try {
+          const { error } = await supabaseClient
+            .from("remote_sessions")
+            .update({
+              execution_command: command,
+              status: "execution_triggered",
+            })
+            .eq("id", currentSessionId);
+
+          if (error) throw error;
+          console.log("Đã gửi lệnh thực thi thành công.");
+          setStatus("Đã gửi lệnh thực thi. Đang chờ Worker bơm vote...", true);
+        } catch (error) {
+          console.error("Lỗi khi gửi lệnh thực thi:", error);
+          setStatus(`Lỗi khi gửi lệnh: ${error.message}`);
+        }
+      };
     </script>
   </body>
 </html>
